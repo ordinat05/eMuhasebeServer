@@ -1,0 +1,118 @@
+﻿
+
+Static Files için "Geçici URL" oluşturup Bu URL, Google Docs veya Microsoft Office Online Viewer'a verilmesi, URL kullanıldıktan sonra geçersiz olur.
+
+
+-cevap 2 - Middleware ile Erişim Kontrolü Yapın: 
+* ASP.NET Core middleware kullanarak, ExcelFiles klasörüne gelen her isteği kontrol edin.
+* Token'ı doğrulayın ve geçerli değilse erişimi reddedin.Bu adresteki dosyaya google yada microsoft erişebiliyorsa, zaten herkes erişebilir demektir. (Herkes yapabilir. google, microsoft, ya da istemediğimiz kişiler.) Dosya URL sini implement etmiş bir istekte, dosyanın görüntülenip  görüntülenmemesi konusu nasıl şifreli olabilir?EditHaklısınız, bu konuyu daha net açıklamalıyım. Google veya Microsoft gibi harici servisler dosyaya erişebiliyorsa, gerçekten de URL'i bilen herkes erişebilir. Bu durumda, tam bir güvenlik sağlamak zor, ancak bazı ek önlemler alınabilir. İşte daha gerçekçi ve yaygın olarak kullanılan bir yaklaşım:
+
+Kısa Ömürlü, Tek Kullanımlık URL'ler Oluşturun:
+
+Her dosya için benzersiz, geçici ve şifrelenmiş bir URL oluşturun.
+Örnek: https://api2.eltutus.com/view/abc123xyz789
+
+
+URL Yönlendirme Kullanın:
+
+Bu özel URL'leri gerçek dosya konumuna yönlendirin.
+Yönlendirme sırasında gerekli kontrolleri yapın.
+
+
+Zaman Sınırlaması Ekleyin:
+
+URL'lere kısa bir yaşam süresi atayın (örneğin, 5 dakika).
+
+
+Kullanım Sayısı Sınırlaması:
+
+Her URL'in yalnızca bir kez kullanılmasına izin verin.
+
+
+
+İşte bu yaklaşımı uygulayan örnek bir kod:
+csharpCopypublic class FileViewController : Controller
+{
+    private readonly IMemoryCache _cache;
+
+    public FileViewController(IMemoryCache cache)
+    {
+        _cache = cache;
+    }
+
+    [HttpGet("generate/{fileId}")]
+    [Authorize] // Sadece yetkili kullanıcılar URL oluşturabilir
+    public IActionResult GenerateViewUrl(string fileId)
+    {
+        var token = Guid.NewGuid().ToString();
+        var expirationTime = DateTime.UtcNow.AddMinutes(5);
+
+        _cache.Set(token, new FileViewRequest { FileId = fileId, ExpirationTime = expirationTime }, expirationTime);
+
+        var url = Url.Action("ViewFile", "FileView", new { token = token }, Request.Scheme);
+        return Ok(new { Url = url });
+    }
+
+    [HttpGet("view/{token}")]
+    public IActionResult ViewFile(string token)
+    {
+        if (!_cache.TryGetValue(token, out FileViewRequest request))
+        {
+            return NotFound();
+        }
+
+        if (request.ExpirationTime < DateTime.UtcNow)
+        {
+            _cache.Remove(token);
+            return BadRequest("URL has expired");
+        }
+
+        _cache.Remove(token); // Tek kullanımlık URL
+
+        var filePath = GetFilePathFromId(request.FileId);
+        if (!System.IO.File.Exists(filePath))
+        {
+            return NotFound();
+        }
+
+        var contentType = GetContentType(filePath);
+        return PhysicalFile(filePath, contentType);
+    }
+
+    private string GetFilePathFromId(string fileId)
+    {
+        // fileId'den gerçek dosya yolunu bulma işlemi
+        return Path.Combine("ExcelFiles", fileId + ".xlsx");
+    }
+
+    private string GetContentType(string filePath)
+    {
+        var provider = new FileExtensionContentTypeProvider();
+        if (!provider.TryGetContentType(filePath, out var contentType))
+        {
+            contentType = "application/octet-stream";
+        }
+        return contentType;
+    }
+}
+
+public class FileViewRequest
+{
+    public string FileId { get; set; }
+    public DateTime ExpirationTime { get; set; }
+}
+Bu yaklaşımla:
+
+Yetkili kullanıcılar, dosya için geçici bir URL oluşturabilir.
+Bu URL kısa bir süre için geçerlidir ve yalnızca bir kez kullanılabilir.
+URL, dosyanın gerçek konumunu gizler.
+Google veya Microsoft servisleri bu geçici URL'i kullanabilir.
+
+Kullanım:
+
+Yetkili kullanıcı önce /generate/{fileId} endpoint'ini çağırır ve geçici URL alır.
+Bu URL, Google Docs veya Microsoft Office Online Viewer'a verilir.
+Servis bu URL'i kullanarak dosyayı görüntüler.
+URL kullanıldıktan sonra geçersiz olur.
+
+Bu yöntem, dosyaların doğrudan URL'lerini paylaşmaktan daha güvenlidir, ancak yine de mükemmel değildir. Geçici URL'in paylaşılması veya kötüye kullanılması riski hala vardır. Tam güvenlik için, dosyaları tamamen kapalı bir sistemde tutmak ve harici servisleri kullanmamak gerekir, ancak bu genellikle pratik değildir.
